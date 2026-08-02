@@ -1,0 +1,49 @@
+# --- GastroHUN images / raw data (never commit) ---
+data/
+*.zip
+*.tar.gz
+
+# --- Extracted embeddings / features (large, regenerable) ---
+outputs/
+**/frozen_features*/
+**/*_features.npy
+**/*_labels.npy
+*.npy
+
+# --- Pretrained model weights / checkpoints (fetched at runtime) ---
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+**/checkpoints/
+
+# --- Credentials / secrets ---
+.env
+*.token
+*credentials*
+*secret*
+
+# --- Colab / Jupyter artifacts ---
+.ipynb_checkpoints/
+*.ipynb.bak
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Local results (keep only what you deliberately export to docs/) ---
+results_cnn_vs_vit/
+article_tables/
+article_figures/

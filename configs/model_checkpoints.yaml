@@ -1,0 +1,85 @@
+# Exact backbone identifiers, seeds and hyperparameters used to produce the
+# results reported in the paper. No model weights are stored here -- all
+# backbones are pulled at run time from their official hubs (Hugging Face /
+# torchvision), pinned by name+revision so the exact weights are reproducible.
+
+seed: 42
+
+# --- ViT / transformer backbones (Hugging Face, frozen, [CLS] token pooling) ---
+vit_backbones:
+  - name: google/vit-base-patch16-224
+    revision: main       # TODO: pin to a commit hash before publishing
+    pooling: cls
+  - name: google/vit-large-patch32-384
+    revision: main
+    pooling: cls
+  - name: facebook/deit-base-distilled-patch16-224
+    revision: main
+    pooling: cls
+  - name: facebook/deit-base-patch16-384
+    revision: main
+    pooling: cls
+  - name: facebook/vit-mae-large
+    revision: main
+    pooling: cls
+
+# --- CNN backbones, Hugging Face (frozen, pooler_output) ---
+cnn_backbones_huggingface:
+  - name: facebook/convnext-tiny-224
+    revision: main
+    pooling: pooler
+  - name: facebook/convnext-base-224
+    revision: main
+    pooling: pooler
+  - name: facebook/convnext-large-224
+    revision: main
+    pooling: pooler
+
+# --- CNN backbones, torchvision (frozen, ImageNet_V1 weights, global-avg-pool) ---
+cnn_backbones_torchvision:
+  - name: resnet18
+    weights: ResNet18_Weights.IMAGENET1K_V1
+  - name: resnet50
+    weights: ResNet50_Weights.IMAGENET1K_V1
+  - name: resnet101
+    weights: ResNet101_Weights.IMAGENET1K_V1
+  - name: resnet152
+    weights: ResNet152_Weights.IMAGENET1K_V1
+  - name: vgg16
+    weights: VGG16_Weights.IMAGENET1K_V1
+  - name: vgg19
+    weights: VGG19_Weights.IMAGENET1K_V1
+
+# --- SVM classifier ---
+svm:
+  kernel: rbf
+  class_weight: balanced
+  probability: true
+  random_state: 42
+  cache_size_mb: 8000
+  # Grid used during the 10-fold nested-CV ranking stage (inner_cv=3 folds)
+  grid_ranking:
+    C: [1, 10, 100]
+    gamma: ["scale", 0.1]
+  # Faster grid used only for the final refit of the best ViT / best CNN on
+  # train+validation, evaluated once on the held-out test set
+  grid_final_refit:
+    C: [1, 10, 100]
+    gamma: ["scale"]
+
+# --- Cross-validation protocol ---
+cross_validation:
+  outer_folds: 10          # StratifiedKFold, shuffle=True, random_state=42
+  inner_folds_ranking: 3   # inner GridSearchCV during nested CV
+  inner_folds_final: 3     # inner GridSearchCV during final refit
+
+# --- Statistical testing ---
+statistical_tests:
+  friedman: true
+  posthoc: nemenyi
+  alpha: 0.05
+
+# --- Labels used per split (per GastroHUN protocol) ---
+labels:
+  train_validation: "FG agreement"       # Fellow Gastroenterologist consensus
+  test: "Complete agreement"             # full inter-annotator consensus

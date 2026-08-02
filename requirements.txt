@@ -1,0 +1,29 @@
+# Reproduction environment for gastrohun-frozen-cnn-vit-benchmark
+#
+# IMPORTANT: the versions below are placeholders based on the reported
+# environment. Before publishing, run the version-check snippet at the
+# bottom of src/cnn_vs_vit_pipeline_pytorch.py in your actual training
+# environment (Google Colab Pro, L4/A100 GPU) and paste the exact printed
+# versions here (python, torch, torchvision, transformers, scikit-learn,
+# pandas). Pin them with `==` so results are reproducible byte-for-byte
+# where possible.
+#
+# Suggested install:
+#   pip install -r requirements.txt
+
+numpy>=1.24,<2.0
+pandas>=2.0
+scikit-learn>=1.3
+scipy>=1.10
+scikit-posthocs>=0.9
+matplotlib>=3.7
+seaborn>=0.12
+Pillow>=10.0
+
+# Deep learning stack
+torch>=2.1
+torchvision>=0.16
+transformers>=4.35
+
+# Optional, only needed if you regenerate notebooks/plots interactively
+jupyter>=1.0

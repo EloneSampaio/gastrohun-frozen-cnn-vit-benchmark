@@ -1,0 +1,52 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below, and cite the accompanying paper."
+type: software
+title: "gastrohun-frozen-cnn-vit-benchmark"
+abstract: >
+  Reproducibility code for a benchmark of frozen CNN and Vision Transformer
+  (ViT) backbones as feature extractors, coupled with an SVM classifier, for
+  multi-class anatomical endoscopic image classification on the GastroHUN
+  dataset. Includes feature extraction, nested cross-validation, SVM
+  hyperparameter search, Friedman/Nemenyi statistical testing, and generation
+  of the tables and figures reported in the associated paper.
+authors:
+  - family-names: "Sampaio"
+    given-names: "Elone Izata"
+    affiliation: "Universidade Federal do Pampa (UNIPAMPA)"
+  - family-names: "Balsanello"
+    given-names: "Vitor Gabriel Bau"
+    affiliation: "Universidade Federal do Pampa (UNIPAMPA)"
+  - family-names: "Luizelli"
+    given-names: "Marcelo Caggiani"
+    affiliation: "Universidade Federal do Pampa (UNIPAMPA)"
+  - family-names: "Flores"
+    given-names: "Eliezer Soares"
+    affiliation: "Universidade Federal do Pampa (UNIPAMPA)"
+version: 1.0.0
+date-released: "2026-08-02"
+license: MIT
+repository-code: "https://github.com/elonesampaio/gastrohun-frozen-cnn-vit-benchmark"
+keywords:
+  - endoscopy
+  - vision transformer
+  - convolutional neural network
+  - medical image classification
+  - GastroHUN
+  - support vector machine
+preferred-citation:
+  type: article
+  title: "Frozen ViT and CNN Representations for Endoscopic Anatomy]{Frozen Vision Transformer and Convolutional Representations for Endoscopic Anatomical Image Classification"
+  authors:
+    - family-names: "Sampaio"
+      given-names: "Elone Izata"
+    - family-names: "Balsanello"
+      given-names: "Vitor Gabriel Bau"
+    - family-names: "Luizelli"
+      given-names: "Marcelo Caggiani"
+    - family-names: "Flores"
+      given-names: "Eliezer Soares"
+  year: 2026
+  # TODO: update with the final journal/venue, volume, pages, and DOI once
+  # accepted/published.
+  journal: "TODO: journal name"
+  status: "in-preparation"
