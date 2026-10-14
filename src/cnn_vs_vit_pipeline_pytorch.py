@@ -10,7 +10,7 @@ Frozen CNN vs. ViT backbones (PyTorch) as feature extractors + SVM
 classifier, on GastroHUN. Stages: (1) load/inspect split, (2) ViT feature
 extraction (HuggingFace), (3) CNN feature extraction (HuggingFace ConvNeXt +
 torchvision ResNet/VGG), (4) SVM classifier, (5) nested 10-fold CV ranking
-across all 14 backbones, (6) Friedman/Nemenyi statistical test, (7) final
+across all 13 backbones, (6) Friedman/Nemenyi statistical test, (7) final
 test-set evaluation of best ViT vs. best CNN, (8) tables/figures export.
 
 Seed fixed to 42 throughout (numpy, torch, all CV splits, SVM). See
@@ -133,8 +133,8 @@ dist = pd.DataFrame({
 dist["Total"] = dist["Train"] + dist["Validation"] + dist["Test"]
 print("\nClass distribution:")
 print(dist.to_string(index=False))
-# Expected: 4,515 train+val / 803 test (Table 1). If these don't match,
-# check LABEL_COLUMN_TRAINVAL.
+# Expected: 5,162 train+val / 803 test in the official CSV used for this
+# reproduction. If these don't match, check LABEL_COLUMN_TRAINVAL.
 
 """### Dataset
 
@@ -319,7 +319,10 @@ def extract_features_for_backbone(model_key, info, train_df, val_df, test_df, nu
     out_dir = os.path.join(FEATURES_DIR, slug)
 
     # If the folder exists, assume extraction already ran (checks the 3 expected files)
-    needed = ["train_features.npy", "validation_features.npy", "test_features.npy"]
+    needed = [
+        "train_features.npy", "validation_features.npy", "test_features.npy",
+        "train_patients.npy", "validation_patients.npy", "test_patients.npy",
+    ]
     if os.path.exists(out_dir):
         files_present = [os.path.exists(os.path.join(out_dir, f)) for f in needed]
         if all(files_present):
@@ -343,6 +346,10 @@ def extract_features_for_backbone(model_key, info, train_df, val_df, test_df, nu
         features, labels = run_extractor(model_or_extractor, source, pooling, loader)
         np.save(os.path.join(out_dir, f"{split_name}_features.npy"), features)
         np.save(os.path.join(out_dir, f"{split_name}_labels.npy"), labels)
+        np.save(
+            os.path.join(out_dir, f"{split_name}_patients.npy"),
+            df["num patient"].to_numpy(dtype=np.int64),
+        )
         print(f"  {split_name} OK")
 
     del model_or_extractor
@@ -387,7 +394,6 @@ average pooling over the last conv feature map.
 CNN_BACKBONES_HF = {
     "facebook/convnext-tiny-224": {"family": "CNN", "source": "huggingface", "pooling": "pooler"},
     "facebook/convnext-base-224": {"family": "CNN", "source": "huggingface", "pooling": "pooler"},
-    "facebook/convnext-large-224": {"family": "CNN", "source": "huggingface", "pooling": "pooler"},
 }
 
 CNN_BACKBONES_TORCHVISION = {
@@ -423,26 +429,28 @@ C/gamma per outer fold. Pure scikit-learn (no torch/tensorflow dependency).
 
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import GridSearchCV, StratifiedKFold
+from sklearn.model_selection import GridSearchCV, StratifiedGroupKFold
 from sklearn.metrics import f1_score
+from sklearn.pipeline import Pipeline
 import numpy as np
 import pandas as pd
 import os
 
 # Grid tuned for throughput on an A100 GPU
 SVM_PARAM_GRID = {
-    'C': [1, 10, 100],
-    'gamma': ['scale', 0.1],
+    'svc__C': [1, 10, 100],
+    'svc__gamma': ['scale'],
 }
 
 def make_svm_pipeline():
-    # On an A100, cache_size can go up to 8GB (8000) to speed up the RBF kernel
-    return SVC(kernel='rbf', class_weight='balanced', probability=True, random_state=42, cache_size=8000)
+    # Fit scaling inside each training fold to prevent leakage.
+    return Pipeline([
+        ('scaler', StandardScaler()),
+        ('svc', SVC(kernel='rbf', class_weight='balanced', probability=False,
+                    random_state=42, cache_size=8000)),
+    ])
 
-def nested_cv_f1_scores_with_checkpoint(X, y, outer_cv, model_name, results_file):
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
+def nested_cv_f1_scores_with_checkpoint(X, y, groups, outer_cv, model_name, results_file):
     fold_scores = []
     if os.path.exists(results_file):
         try:
@@ -452,17 +460,18 @@ def nested_cv_f1_scores_with_checkpoint(X, y, outer_cv, model_name, results_file
                 print(f"      [INFO] Resuming {model_name} from fold {len(fold_scores)+1}")
         except: pass
 
-    for i, (train_idx, val_idx) in enumerate(outer_cv.split(X_scaled, y)):
+    for i, (train_idx, val_idx) in enumerate(outer_cv.split(X, y, groups)):
         if i < len(fold_scores):
             continue
 
-        X_train_out, X_val_out = X_scaled[train_idx], X_scaled[val_idx]
+        X_train_out, X_val_out = X[train_idx], X[val_idx]
         y_train_out, y_val_out = y[train_idx], y[val_idx]
+        groups_train_out = groups[train_idx]
 
-        # n_jobs=-1 uses all available cores
-        inner_cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+        # Both CV levels preserve patient groups.
+        inner_cv = StratifiedGroupKFold(n_splits=3, shuffle=True, random_state=42)
         grid = GridSearchCV(make_svm_pipeline(), SVM_PARAM_GRID, scoring='f1_macro', cv=inner_cv, n_jobs=-1, verbose=1)
-        grid.fit(X_train_out, y_train_out)
+        grid.fit(X_train_out, y_train_out, groups=groups_train_out)
 
         y_pred = grid.predict(X_val_out)
         score = f1_score(y_val_out, y_pred, average='macro')
@@ -484,7 +493,7 @@ def nested_cv_f1_scores_with_checkpoint(X, y, outer_cv, model_name, results_file
 
 """## Nested 10-fold CV across all backbones
 
-Same `StratifiedKFold(random_state=42)` object reused for all 14 backbones
+Same `StratifiedGroupKFold(random_state=42)` object reused for all 13 backbones
 (labels are identical across backbones, only features change) so the
 Friedman test's paired-block comparison is valid.
 """
@@ -495,8 +504,9 @@ if 'ALL_BACKBONES' not in locals():
     cnn_tv = locals().get('CNN_BACKBONES_TORCHVISION', {})
     ALL_BACKBONES = {**vit_b, **cnn_hf, **cnn_tv}
 
-OUTER_CV = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
-RESULTS_FILE = os.path.join(RESULTS_DIR, "cv_f1macro_per_fold_all_backbones.csv")
+OUTER_CV = StratifiedGroupKFold(n_splits=10, shuffle=True, random_state=42)
+# Keep corrected patient-grouped scores separate from legacy ungrouped runs.
+RESULTS_FILE = os.path.join(RESULTS_DIR, "cv_f1macro_per_fold_all_backbones_grouped.csv")
 
 for model_key, info in ALL_BACKBONES.items():
     # 1. Standardize the folder name (slug) to look up cached features
@@ -504,8 +514,12 @@ for model_key, info in ALL_BACKBONES.items():
     feat_dir = os.path.join(FEATURES_DIR, slug)
 
     # 2. Check whether features exist in that folder
-    if not os.path.exists(os.path.join(feat_dir, "train_features.npy")):
-        print(f">>> Skipping {model_key}: feature folder '{slug}' not found.")
+    required_files = [
+        "train_features.npy", "train_labels.npy", "train_patients.npy",
+        "validation_features.npy", "validation_labels.npy", "validation_patients.npy",
+    ]
+    if not all(os.path.exists(os.path.join(feat_dir, filename)) for filename in required_files):
+        print(f">>> Skipping {model_key}: features or patient groups are incomplete.")
         continue
 
     # Check whether the model already has 10 folds recorded in the CSV
@@ -519,9 +533,21 @@ for model_key, info in ALL_BACKBONES.items():
     # Load features from the folder and run CV, saving under the CSV key
     X_train = np.load(os.path.join(feat_dir, "train_features.npy"))
     y_train = np.load(os.path.join(feat_dir, "train_labels.npy"))
+    groups_train = np.load(os.path.join(feat_dir, "train_patients.npy"))
+    X_val = np.load(os.path.join(feat_dir, "validation_features.npy"))
+    y_val = np.load(os.path.join(feat_dir, "validation_labels.npy"))
+    groups_val = np.load(os.path.join(feat_dir, "validation_patients.npy"))
+
+    # The paper ranks models on the official train+validation pool. Groups
+    # remain attached to each row so no patient can cross a CV boundary.
+    X_rank = np.vstack([X_train, X_val])
+    y_rank = np.hstack([y_train, y_val])
+    groups_rank = np.hstack([groups_train, groups_val])
 
     print(f"\n>>> Starting nested CV for: {model_key}", flush=True)
-    nested_cv_f1_scores_with_checkpoint(X_train, y_train, OUTER_CV, model_key, RESULTS_FILE)
+    nested_cv_f1_scores_with_checkpoint(
+        X_rank, y_rank, groups_rank, OUTER_CV, model_key, RESULTS_FILE
+    )
 
 print("\n[DONE] Processing complete (or all models already up to date).")
 
@@ -529,7 +555,7 @@ import pandas as pd
 import os
 
 # Path to the results file
-results_path = os.path.join(RESULTS_DIR, "cv_f1macro_per_fold_all_backbones.csv")
+results_path = os.path.join(RESULTS_DIR, "cv_f1macro_per_fold_all_backbones_grouped.csv")
 
 if os.path.exists(results_path):
     df_check = pd.read_csv(results_path)
@@ -549,7 +575,7 @@ else:
 """## Friedman + Nemenyi statistical test
 
 Friedman: rank-based non-parametric test for any significant difference
-across the 14 backbones (10 folds as paired blocks). If H0 is rejected
+across the 13 backbones (10 folds as paired blocks). If H0 is rejected
 (p < 0.05), Nemenyi post-hoc runs all pairwise comparisons with multiple-
 comparison correction. Critical-difference (CD) diagram per Demsar (2006):
 models plotted by mean rank, horizontal bars link models not significantly
@@ -559,7 +585,7 @@ different (rank gap < CD).
 from scipy.stats import friedmanchisquare
 import scikit_posthocs as sp
 
-cv_results_df = pd.read_csv(os.path.join(RESULTS_DIR, "cv_f1macro_per_fold_all_backbones.csv"))
+cv_results_df = pd.read_csv(os.path.join(RESULTS_DIR, "cv_f1macro_per_fold_all_backbones_grouped.csv"))
 
 # --- Friedman Test ---
 stat, p_value = friedmanchisquare(*[cv_results_df[col] for col in cv_results_df.columns])
@@ -645,6 +671,21 @@ def critical_difference(k: int, N: int, alpha: float = 0.05) -> float:
 # Calculate CD and plot
 cd_value = critical_difference(k=len(avg_ranks), N=len(cv_results_df))
 families = {k: v["family"] for k, v in ALL_BACKBONES.items()}
+MODEL_NAME_MAP = {
+    'facebook/vit-mae-large': 'ViT-MAE (Large)',
+    'facebook/deit-base-distilled-patch16-224': 'DeiT-Distilled',
+    'google/vit-large-patch32-384': 'ViT-Large',
+    'facebook/deit-base-patch16-384': 'DeiT-Base (384)',
+    'google/vit-base-patch16-224': 'ViT-Base',
+    'resnet18': 'ResNet-18',
+    'resnet50': 'ResNet-50',
+    'resnet101': 'ResNet-101',
+    'resnet152': 'ResNet-152',
+    'vgg16': 'VGG-16',
+    'vgg19': 'VGG-19',
+    'facebook/convnext-base-224': 'ConvNext-Base',
+    'facebook/convnext-tiny-224': 'ConvNext-Tiny'
+}
 
 plot_critical_difference_diagram_article(
     avg_ranks, families, MODEL_NAME_MAP,
@@ -659,12 +700,13 @@ evaluates once on the held-out test set (Complete agreement).
 """
 
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
-from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import roc_curve
+from sklearn.preprocessing import label_binarize
 
 # Simplified grid for a faster final refit
 SVM_FAST_GRID = {
-    'C': [1, 10, 100],
-    'gamma': ['scale']
+    'svc__C': [1, 10, 100],
+    'svc__gamma': ['scale', 0.1]
 }
 
 # Split original keys by family
@@ -693,22 +735,21 @@ if not available_vit.empty and not available_cnn.empty:
         y_val = np.load(os.path.join(feat_dir, "validation_labels.npy"))
         X_test = np.load(os.path.join(feat_dir, "test_features.npy"))
         y_test = np.load(os.path.join(feat_dir, "test_labels.npy"))
+        groups_train = np.load(os.path.join(feat_dir, "train_patients.npy"))
+        groups_val = np.load(os.path.join(feat_dir, "validation_patients.npy"))
 
         # Merge train + validation
         X_fit = np.vstack([X_train, X_val])
         y_fit = np.hstack([y_train, y_val])
-
-        scaler = StandardScaler()
-        X_fit_scaled = scaler.fit_transform(X_fit)
-        X_test_scaled = scaler.transform(X_test)
+        groups_fit = np.hstack([groups_train, groups_val])
 
         # Reduced inner CV (3 folds) for speed
-        inner_cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+        inner_cv = StratifiedGroupKFold(n_splits=3, shuffle=True, random_state=42)
         grid = GridSearchCV(make_svm_pipeline(), SVM_FAST_GRID, scoring='f1_macro', cv=inner_cv, n_jobs=-1, verbose=1)
-        grid.fit(X_fit_scaled, y_fit)
+        grid.fit(X_fit, y_fit, groups=groups_fit)
 
-        y_pred = grid.best_estimator_.predict(X_test_scaled)
-        y_scores = grid.best_estimator_.predict_proba(X_test_scaled)
+        y_pred = grid.best_estimator_.predict(X_test)
+        y_scores = grid.best_estimator_.decision_function(X_test)
 
         acc = (y_pred == y_test).mean()
         f1_m = f1_score(y_test, y_pred, average='macro', zero_division=0)
@@ -718,7 +759,8 @@ if not available_vit.empty and not available_cnn.empty:
         report = classification_report(y_test, y_pred, target_names=CLASS_NAMES, output_dict=True, zero_division=0)
         pd.DataFrame(report).transpose().to_csv(os.path.join(results_dir, f"test_report_{slug}.csv"))
 
-        return {"key": model_key, "y_test": y_test, "y_scores": y_scores, "cm": confusion_matrix(y_test, y_pred)}
+        return {"key": model_key, "y_test": y_test, "y_pred": y_pred,
+                "y_scores": y_scores, "cm": confusion_matrix(y_test, y_pred)}
 
     result_vit = final_fit_and_evaluate(best_vit_key)
     result_cnn = final_fit_and_evaluate(best_cnn_key)
@@ -729,7 +771,7 @@ else:
 
 Exports everything above as paper-ready tables (`article_tables/*.tex` +
 `.csv`) and 300dpi figures (`article_figures/*.png`):
-Table 1 class distribution; Table 2 SVM grid; Table 3 14-backbone ranking
+Table 1 class distribution; Table 2 SVM grid; Table 3 13-backbone ranking
 (mean/std/CI95%); Figure 3 F1-macro boxplot; Figure 4 CD diagram; Table 4
 clinical metrics (sensitivity/specificity/AUC) per class, best ViT and CNN;
 Figure 5 ROC curves; Figure 6 confusion matrices; Table 5 final ViT-vs-CNN
@@ -751,22 +793,6 @@ def df_to_latex_file(df, path, float_format="%.3f", index=False):
     with open(path, "w") as f:
         f.write(latex_str)
     print(f"  LaTeX table: {path}")
-
-MODEL_NAME_MAP = {
-    'facebook/vit-mae-large': 'ViT-MAE (Large)',
-    'facebook/deit-base-distilled-patch16-224': 'DeiT-Distilled',
-    'google/vit-large-patch32-384': 'ViT-Large',
-    'facebook/deit-base-patch16-384': 'DeiT-Base (384)',
-    'google/vit-base-patch16-224': 'ViT-Base',
-    'resnet18': 'ResNet-18',
-    'resnet50': 'ResNet-50',
-    'resnet101': 'ResNet-101',
-    'resnet152': 'ResNet-152',
-    'vgg16': 'VGG-16',
-    'vgg19': 'VGG-19',
-    'facebook/convnext-base-224': 'ConvNext-Base',
-    'facebook/convnext-tiny-224': 'ConvNext-Tiny'
-}
 
 # -----------------------------------------------------------------------
 # TABLE 0 - Mapping: original name vs. paper name
@@ -807,14 +833,14 @@ df_to_latex_file(table1_full, os.path.join(ARTICLE_TABLES_DIR, "table1_class_dis
 # TABLE 2 - SVM Hyperparameter search space
 # -----------------------------------------------------------------------
 table2 = pd.DataFrame([
-    {"Stage": "Ranking (Nested CV, 14 backbones)", "Hyperparameter": "C",
-     "Evaluated Values": str(SVM_FAST_GRID['C'])},
-    {"Stage": "Ranking (Nested CV, 14 backbones)", "Hyperparameter": "gamma (RBF)",
-     "Evaluated Values": str(SVM_FAST_GRID['gamma'])},
+    {"Stage": "Ranking (Nested CV, 13 backbones)", "Hyperparameter": "C",
+     "Evaluated Values": str(SVM_PARAM_GRID['svc__C'])},
+    {"Stage": "Ranking (Nested CV, 13 backbones)", "Hyperparameter": "gamma (RBF)",
+     "Evaluated Values": str(SVM_PARAM_GRID['svc__gamma'])},
     {"Stage": "Final Adjustment (Best ViT and CNN)", "Hyperparameter": "C",
-     "Evaluated Values": str(SVM_PARAM_GRID['C'])},
+     "Evaluated Values": str(SVM_FAST_GRID['svc__C'])},
     {"Stage": "Final Adjustment (Best ViT and CNN)", "Hyperparameter": "gamma (RBF)",
-     "Evaluated Values": str(SVM_PARAM_GRID['gamma'])},
+     "Evaluated Values": str(SVM_FAST_GRID['svc__gamma'])},
 ])
 table2.to_csv(os.path.join(ARTICLE_TABLES_DIR, "table2_hyperparameter_search_space.csv"), index=False)
 df_to_latex_file(table2, os.path.join(ARTICLE_TABLES_DIR, "table2_hyperparameter_search_space.tex"))
@@ -889,9 +915,43 @@ shutil.copy(
 # -----------------------------------------------------------------------
 # TABLE 4 - Clinical metrics in English
 # -----------------------------------------------------------------------
+def save_clinical_table_latex(df, filename):
+    """Write a clinical-metrics table into the article tables directory."""
+    df_to_latex_file(df, os.path.join(ARTICLE_TABLES_DIR, filename))
+
+
+def plot_roc_curves(y_true, y_scores, title, output_path):
+    """Plot one-vs-rest ROC curves from multiclass decision-function scores."""
+    classes = np.arange(len(CLASS_NAMES))
+    y_true_bin = label_binarize(y_true, classes=classes)
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    plotted = 0
+    for index, class_name in enumerate(CLASS_NAMES):
+        if y_true_bin[:, index].min() == y_true_bin[:, index].max():
+            continue
+        fpr, tpr, _ = roc_curve(y_true_bin[:, index], y_scores[:, index])
+        ax.plot(fpr, tpr, linewidth=1.3, label=class_name)
+        plotted += 1
+
+    ax.plot([0, 1], [0, 1], color="0.5", linestyle="--", linewidth=1)
+    ax.set(
+        xlabel="False positive rate",
+        ylabel="True positive rate",
+        title=title,
+        xlim=(0, 1),
+        ylim=(0, 1),
+    )
+    if plotted:
+        ax.legend(title="Class", ncol=2, fontsize=8, loc="lower right")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 def results_to_clinical_df_english(result_dict):
     report = classification_report(result_dict['y_test'],
-                                   np.argmax(result_dict['y_scores'], axis=1),
+                                   result_dict['y_pred'],
                                    target_names=CLASS_NAMES,
                                    output_dict=True,
                                    zero_division=0)
@@ -960,8 +1020,7 @@ plot_confusion_matrix_article(result_cnn["cm"], f"Confusion Matrix - {cnn_articl
 summary_data = []
 for res in [result_vit, result_cnn]:
     y_test = res["y_test"]
-    # Predictions from scores (argmax)
-    y_pred = np.argmax(res["y_scores"], axis=1)
+    y_pred = res["y_pred"]
 
     acc = (y_pred == y_test).mean()
     f1_m = f1_score(y_test, y_pred, average='macro', zero_division=0)
@@ -993,10 +1052,9 @@ print("\nPipeline complete.")
 
 from sklearn.metrics import roc_auc_score
 
-def calculate_clinical_metrics(y_true, y_scores, class_names):
+def calculate_clinical_metrics(y_true, y_scores, class_names, y_pred):
     """Computes sensitivity, specificity and AUC per class (one-vs-rest)."""
     metrics_list = []
-    y_pred = np.argmax(y_scores, axis=1)
 
     for i, class_name in enumerate(class_names):
         # One-vs-rest binarization
@@ -1034,8 +1092,12 @@ def calculate_clinical_metrics(y_true, y_scores, class_names):
     return pd.concat([df_metrics, macro_row], ignore_index=True)
 
 # Generate clinical metrics tables
-clin_metrics_vit = calculate_clinical_metrics(result_vit["y_test"], result_vit["y_scores"], CLASS_NAMES)
-clin_metrics_cnn = calculate_clinical_metrics(result_cnn["y_test"], result_cnn["y_scores"], CLASS_NAMES)
+clin_metrics_vit = calculate_clinical_metrics(
+    result_vit["y_test"], result_vit["y_scores"], CLASS_NAMES, result_vit["y_pred"]
+)
+clin_metrics_cnn = calculate_clinical_metrics(
+    result_cnn["y_test"], result_cnn["y_scores"], CLASS_NAMES, result_cnn["y_pred"]
+)
 
 # Export with the final paper-ready names
 df_to_latex_file(clin_metrics_vit, os.path.join(ARTICLE_TABLES_DIR, "table4_clinical_metrics_vit.tex"), float_format="%.3f")
@@ -1051,7 +1113,7 @@ print(clin_metrics_vit.tail(1))
 
 """## Output-to-paper mapping
 
-cv_f1macro_per_fold_all_backbones.csv -> Table 3 (mean/std/CI per backbone)
+cv_f1macro_per_fold_all_backbones_grouped.csv -> Table 3 (mean/std/CI per backbone)
 critical_difference_diagram.png       -> Figure 4
 nemenyi_pvalues.csv                   -> pairwise significance for the text
 test_report_<model>.csv (x2)          -> per-class test report, best ViT/CNN

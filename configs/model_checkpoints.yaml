@@ -1,7 +1,7 @@
 # Exact backbone identifiers, seeds and hyperparameters used to produce the
 # results reported in the paper. No model weights are stored here -- all
 # backbones are pulled at run time from their official hubs (Hugging Face /
-# torchvision), pinned by name+revision so the exact weights are reproducible.
+# torchvision).
 
 seed: 42
 
@@ -31,10 +31,6 @@ cnn_backbones_huggingface:
   - name: facebook/convnext-base-224
     revision: main
     pooling: pooler
-  - name: facebook/convnext-large-224
-    revision: main
-    pooling: pooler
-
 # --- CNN backbones, torchvision (frozen, ImageNet_V1 weights, global-avg-pool) ---
 cnn_backbones_torchvision:
   - name: resnet18
@@ -54,24 +50,25 @@ cnn_backbones_torchvision:
 svm:
   kernel: rbf
   class_weight: balanced
-  probability: true
+  probability: false
   random_state: 42
   cache_size_mb: 8000
   # Grid used during the 10-fold nested-CV ranking stage (inner_cv=3 folds)
   grid_ranking:
     C: [1, 10, 100]
-    gamma: ["scale", 0.1]
+    gamma: ["scale"]
   # Faster grid used only for the final refit of the best ViT / best CNN on
   # train+validation, evaluated once on the held-out test set
   grid_final_refit:
     C: [1, 10, 100]
-    gamma: ["scale"]
+    gamma: ["scale", 0.1]
 
 # --- Cross-validation protocol ---
 cross_validation:
-  outer_folds: 10          # StratifiedKFold, shuffle=True, random_state=42
+  outer_folds: 10          # StratifiedGroupKFold, shuffle=True, random_state=42
   inner_folds_ranking: 3   # inner GridSearchCV during nested CV
   inner_folds_final: 3     # inner GridSearchCV during final refit
+  group_column: "num patient"
 
 # --- Statistical testing ---
 statistical_tests:
