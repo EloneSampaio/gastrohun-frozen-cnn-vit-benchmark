@@ -1,0 +1,34 @@
+{
+  "captured_at_utc": "2026-10-13T23:59:00.026591+00:00",
+  "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]",
+  "platform": "Linux-6.6.122+-x86_64-with-glibc2.39",
+  "cwd": "/content",
+  "packages": {
+    "numpy": "2.1.3",
+    "pandas": "2.2.3",
+    "scikit-learn": "1.6.1",
+    "scipy": "1.16.3",
+    "scikit-posthocs": "0.17.1",
+    "matplotlib": "3.10.0",
+    "seaborn": "0.13.2",
+    "Pillow": "11.3.0",
+    "torch": "2.11.0+cu130",
+    "torchvision": "0.26.0+cu130",
+    "transformers": "5.18.0"
+  },
+  "paths": {
+    "remote_root": "/content/gastrohun-benchmark",
+    "data_dir": "/content/gastrohun-data/images",
+    "split_csv": "/content/gastrohun-data/official_splits/image_classification.csv",
+    "features_dir": "/content/gastrohun-benchmark/outputs/frozen_features",
+    "results_dir": "/content/gastrohun-benchmark/outputs/results"
+  },
+  "cuda": {
+    "available": true,
+    "torch_cuda": "13.0",
+    "device_count": 1,
+    "devices": [
+      "NVIDIA A100-SXM4-40GB"
+    ]
+  }
+}

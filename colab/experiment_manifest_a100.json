@@ -1,0 +1,42 @@
+{
+  "run_id": "gastrohun-a100-20261013",
+  "status": "completed",
+  "seed": 42,
+  "hardware_manifest": "runtime_manifest_a100.json",
+  "dataset": {
+    "name": "GastroHUN",
+    "figshare_doi": "10.6084/m9.figshare.27308133.v1",
+    "figshare_file_id": 50010117,
+    "archive_name": "Labeled Images.zip",
+    "archive_size_bytes": 2820524449,
+    "archive_md5": "0d6b48a36a21388123cc5d0231dbd362",
+    "images_extracted": 8834,
+    "patients": 387,
+    "split_csv": "Monografia/dissertacao/GastroVision_image_classification.csv"
+  },
+  "protocol": {
+    "backbones": 13,
+    "feature_extraction": "frozen",
+    "classifier": "SVM RBF",
+    "outer_cv": "StratifiedGroupKFold(n_splits=10, shuffle=true, random_state=42)",
+    "inner_cv": 3,
+    "group_column": "num patient",
+    "ranking_pool": "official train + validation",
+    "held_out_test": 803,
+    "statistical_tests": ["Friedman", "Nemenyi"]
+  },
+  "results": {
+    "best_vit_cv": "facebook/vit-mae-large",
+    "best_vit_cv_f1_macro": 0.7082342916055009,
+    "best_vit_test_accuracy": 0.7409713574097135,
+    "best_vit_test_f1_macro": 0.7328640041037598,
+    "best_cnn_cv": "resnet18",
+    "best_cnn_cv_f1_macro": 0.6423072248940065,
+    "best_cnn_test_accuracy": 0.676214196762142,
+    "best_cnn_test_f1_macro": 0.6709556496488452
+  },
+  "outputs": {
+    "root": "Monografia/benchmark/outputs",
+    "archive": "Monografia/benchmark/archives/gastrohun_outputs_a100.tar.gz"
+  }
+}
